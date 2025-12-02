@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  postgres_feat:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: featDB
+    volumes:
+      - postgres_feat_data:/var/lib/postgresql/data
+      - ./migrations/create_tables.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    networks:
+      - microservices
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d featDB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  featurizer:
+    build: .
+    ports:
+      - "8001:8001"
+    environment:
+      - DEID_BASE_URL=http://deid:8000
+      - DATABASE_URL=postgresql://postgres:root@postgres_feat:5432/featDB
+      - USE_BIOBERT=false
+    depends_on:
+      postgres_feat:
+        condition: service_healthy
+    networks:
+      - microservices
+    volumes:
+      - ./.env:/app/.env:ro  # Mount .env as read-only
+
+  # Optional: if you want to include deid service in same compose
+  # deid:
+  #   image: your-deid-image:latest
+  #   ports:
+  #     - "8000:8000"
+  #   networks:
+  #     - microservices
+
+volumes:
+  postgres_feat_data:
+
+networks:
+  microservices:
+    driver: bridge

@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres_deid:
+    image: postgres:15-alpine
+    container_name: deid-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: deid
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - deid-network
+
+  # FastAPI Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: deid-microservice
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres_deid:5434/deid
+      FHIR_PROXY_BASE_URL: ${FHIR_PROXY_BASE_URL:-http://host.docker.internal:8080}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres_deid:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+    networks:
+      - deid-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  deid-network:
+    driver: bridge

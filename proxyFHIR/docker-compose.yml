@@ -1,0 +1,50 @@
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: proxyfhir
+      POSTGRES_PASSWORD: proxyfhir
+      POSTGRES_DB: proxyfhir
+    ports:
+      - "5433:5432" # map container 5432 to host 5433 as requested
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+  synthea:
+    image: eclipse-temurin:17
+    working_dir: /synthea
+    volumes:
+      - ./synthea-sample:/synthea # mount the folder containing synthea jar and scripts
+    environment:
+      - NUM_PATIENTS=${NUM_PATIENTS:-100}
+    # Run the bundled generate.sh via `sh` unless SKIP_SYNTH=true
+    # If you want to skip generation (because you already have the files), set SKIP_SYNTH=true in .env or the environment
+    command: ["sh", "-c", "if [ \"${SKIP_SYNTH:-false}\" = \"true\" ]; then echo 'skipping synthea generation'; sleep 1; else sh /synthea/generate.sh ${NUM_PATIENTS}; fi"]
+    restart: 'no'
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./synthea-sample:/synthea # app will read generated files from here
+    depends_on:
+      - db
+      - synthea
+    environment:
+      # allow setting NUM_PATIENTS so the app can reference the generated folder
+      - NUM_PATIENTS=${NUM_PATIENTS:-580}
+      # Spring datasource points to the internal docker network hostname 'db' on default 5432
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/proxyfhir
+      - SPRING_DATASOURCE_USERNAME=proxyfhir
+      - SPRING_DATASOURCE_PASSWORD=proxyfhir
+      # Ensure the running container sees these properties without recompiling the JAR
+      - SYNTHEA_FILES_DIR=/synthea/${NUM_PATIENTS:-100}-patients
+      - SYNTHEA_IMPORT_DIR=/synthea/${NUM_PATIENTS:-100}-patients
+    # Wait for the synthea output directory and the completion log (log.ndjson) before launching the app
+    command: ["sh", "-c", "while [ ! -d /synthea/${NUM_PATIENTS}-patients ]; do echo 'waiting for synthea output dir...'; sleep 1; done; echo 'found directory'; while [ ! -f /synthea/${NUM_PATIENTS}-patients/log.ndjson ]; do echo 'waiting for synthea to finish (log.ndjson not present)...'; sleep 1; done; echo 'found log.ndjson, starting app'; java -jar /app/app.jar --synthea.files.dir=/synthea/${NUM_PATIENTS}-patients --synthea.import.dir=/synthea/${NUM_PATIENTS}-patients"]
+
+volumes:
+  db-data:
